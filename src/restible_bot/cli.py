@@ -29,12 +29,24 @@ def _build_parser() -> argparse.ArgumentParser:
 
     render_parser = subparsers.add_parser("render-bot-config")
     render_parser.add_argument("--checkpoint")
+    render_parser.add_argument("--matchmaking", action="store_true")
+    render_parser.add_argument("--rated", action="store_true")
+    render_parser.add_argument("--initial-time", type=int, default=480)
+    render_parser.add_argument("--increment", type=int, default=0)
+    render_parser.add_argument("--concurrency", type=int, default=1)
 
     uci_parser = subparsers.add_parser("run-uci")
     uci_parser.add_argument("--checkpoint", required=True)
 
     bot_parser = subparsers.add_parser("run-lichess-bot")
     bot_parser.add_argument("--checkpoint")
+    bot_parser.add_argument("--max-games", type=int)
+    bot_parser.add_argument("--matchmaking", action="store_true")
+    bot_parser.add_argument("--rated", action="store_true")
+    bot_parser.add_argument("--initial-time", type=int, default=480)
+    bot_parser.add_argument("--increment", type=int, default=0)
+    bot_parser.add_argument("--concurrency", type=int, default=1)
+    bot_parser.add_argument("--poll-interval", type=int, default=30)
 
     verify_parser = subparsers.add_parser("verify-bot")
     verify_parser.add_argument("--checkpoint")
@@ -73,7 +85,17 @@ def main() -> None:
 
     if args.command == "render-bot-config":
         checkpoint = Path(args.checkpoint) if args.checkpoint else None
-        print(render_lichess_bot_config(config, checkpoint))
+        print(
+            render_lichess_bot_config(
+                config,
+                checkpoint,
+                allow_matchmaking=args.matchmaking,
+                rated=args.rated,
+                initial_time=args.initial_time,
+                increment=args.increment,
+                concurrency=args.concurrency,
+            )
+        )
         return
 
     if args.command == "run-uci":
@@ -82,7 +104,19 @@ def main() -> None:
 
     if args.command == "run-lichess-bot":
         checkpoint = Path(args.checkpoint) if args.checkpoint else None
-        run_lichess_bot(config, checkpoint)
+        result = run_lichess_bot(
+            config,
+            checkpoint,
+            max_games=args.max_games,
+            allow_matchmaking=args.matchmaking,
+            rated=args.rated,
+            initial_time=args.initial_time,
+            increment=args.increment,
+            concurrency=args.concurrency,
+            poll_interval_seconds=args.poll_interval,
+        )
+        if result is not None:
+            print(result)
         return
 
     if args.command == "verify-bot":

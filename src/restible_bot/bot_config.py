@@ -4,10 +4,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from typing import Any
+import signal
 
 import chess
 import chess.engine
+import requests
 import yaml
 
 from .config import project_root, resolve_path
@@ -25,13 +28,45 @@ def default_checkpoint_path(config: dict[str, Any]) -> Path:
     raise FileNotFoundError("No checkpoint found. Train the model first or pass --checkpoint explicitly.")
 
 
-def render_lichess_bot_config(config: dict[str, Any], checkpoint_path: Path | None = None) -> Path:
+def _auth_headers(config: dict[str, Any]) -> dict[str, str]:
+    token = os.getenv(config["bot"]["token_env"])
+    if not token:
+        raise RuntimeError(f"Missing {config['bot']['token_env']} in the environment or .env file.")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def fetch_account_state(config: dict[str, Any]) -> dict[str, Any]:
+    headers = _auth_headers(config)
+    base_url = config["lichess"]["base_url"].rstrip("/")
+    account = requests.get(f"{base_url}/api/account", headers=headers, timeout=30)
+    account.raise_for_status()
+    playing = requests.get(f"{base_url}/api/account/playing", headers=headers, timeout=30)
+    playing.raise_for_status()
+    return {
+        "account": account.json(),
+        "playing": playing.json(),
+    }
+
+
+def render_lichess_bot_config(
+    config: dict[str, Any],
+    checkpoint_path: Path | None = None,
+    *,
+    allow_matchmaking: bool = False,
+    rated: bool = False,
+    initial_time: int = 480,
+    increment: int = 0,
+    concurrency: int = 1,
+    allow_during_games: bool = False,
+    opponent_rating_difference: int = 500,
+) -> Path:
     root = project_root(config)
     checkpoint_path = (checkpoint_path or default_checkpoint_path(config)).resolve()
     output_path = resolve_path(config, config["bot"]["config_output"])
     ensure_parent(output_path)
 
     token = os.getenv(config["bot"]["token_env"], "SET_ME")
+    mode = "rated" if rated else "casual"
     payload: dict[str, Any] = {
         "token": token,
         "url": config["lichess"]["base_url"].rstrip("/") + "/",
@@ -57,15 +92,22 @@ def render_lichess_bot_config(config: dict[str, Any], checkpoint_path: Path | No
             },
         },
         "challenge": {
-            "concurrency": 1,
+            "concurrency": concurrency,
             "variants": ["standard"],
             "time_controls": ["rapid"],
-            "modes": ["casual"],
+            "modes": [mode],
             "accept_bot": True,
-            "only_bot": False,
+            "only_bot": allow_matchmaking,
         },
         "matchmaking": {
-            "allow_matchmaking": False,
+            "allow_matchmaking": allow_matchmaking,
+            "allow_during_games": allow_during_games,
+            "challenge_timeout": 1,
+            "challenge_initial_time": [initial_time],
+            "challenge_increment": [increment],
+            "opponent_rating_difference": opponent_rating_difference,
+            "challenge_mode": mode,
+            "rating_preference": "none",
         },
     }
     output_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -96,14 +138,112 @@ def verify_local_bot_setup(config: dict[str, Any], checkpoint_path: Path | None 
     }
 
 
-def run_lichess_bot(config: dict[str, Any], checkpoint_path: Path | None = None) -> None:
-    if not os.getenv(config["bot"]["token_env"]):
-        raise RuntimeError(f"Missing {config['bot']['token_env']} in the environment or .env file.")
-    config_path = render_lichess_bot_config(config, checkpoint_path)
+def _rapid_perf(account: dict[str, Any]) -> dict[str, Any]:
+    return (account.get("perfs") or {}).get("rapid") or {}
+
+
+def _active_game_count(playing_payload: dict[str, Any]) -> int:
+    now_playing = playing_payload.get("nowPlaying")
+    if isinstance(now_playing, list):
+        return len(now_playing)
+    return int(playing_payload.get("playing", 0) or 0)
+
+
+def run_lichess_bot(
+    config: dict[str, Any],
+    checkpoint_path: Path | None = None,
+    *,
+    max_games: int | None = None,
+    allow_matchmaking: bool = False,
+    rated: bool = False,
+    initial_time: int = 480,
+    increment: int = 0,
+    concurrency: int = 1,
+    poll_interval_seconds: int = 30,
+) -> dict[str, Any] | None:
+    _auth_headers(config)
+    config_path = render_lichess_bot_config(
+        config,
+        checkpoint_path,
+        allow_matchmaking=allow_matchmaking,
+        rated=rated,
+        initial_time=initial_time,
+        increment=increment,
+        concurrency=concurrency,
+        allow_during_games=allow_matchmaking,
+    )
     root = project_root(config)
-    subprocess.run(
-        [sys.executable, str(root / "third_party" / "lichess-bot" / "lichess-bot.py"), "--config", str(config_path)],
-        check=True,
+    command = [sys.executable, str(root / "third_party" / "lichess-bot" / "lichess-bot.py"), "--config", str(config_path)]
+
+    if not max_games:
+        subprocess.run(command, check=True, cwd=root)
+        return None
+
+    initial_state = fetch_account_state(config)
+    initial_account = initial_state["account"]
+    initial_rapid = _rapid_perf(initial_account)
+    username = initial_account["username"]
+    baseline_games = int(initial_rapid.get("games", 0) or 0)
+    target_games = baseline_games + max_games
+
+    logs_dir = root / "lichess_bot_auto_logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "lichess-bot-max-games.log"
+    log_handle = log_path.open("a", encoding="utf-8")
+
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    process = subprocess.Popen(
+        command,
         cwd=root,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        creationflags=creationflags,
     )
 
+    try:
+        while True:
+            if process.poll() is not None:
+                raise RuntimeError(f"lichess-bot exited early with code {process.returncode}. See {log_path}.")
+
+            state = fetch_account_state(config)
+            account = state["account"]
+            rapid = _rapid_perf(account)
+            current_games = int(rapid.get("games", 0) or 0)
+            current_rating = rapid.get("rating")
+            active_games = _active_game_count(state["playing"])
+            progress = current_games - baseline_games
+            print(
+                f"User={username} rapid_games={current_games} progress={progress}/{max_games} "
+                f"rapid_rating={current_rating} active_games={active_games}",
+                flush=True,
+            )
+
+            if current_games >= target_games and active_games == 0:
+                break
+            time.sleep(poll_interval_seconds)
+
+        try:
+            if creationflags:
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                process.terminate()
+            process.wait(timeout=30)
+        except Exception:
+            process.kill()
+            process.wait(timeout=30)
+
+        final_state = fetch_account_state(config)
+        final_account = final_state["account"]
+        final_rapid = _rapid_perf(final_account)
+        return {
+            "username": final_account["username"],
+            "games_started_from": baseline_games,
+            "games_completed": int(final_rapid.get("games", 0) or 0) - baseline_games,
+            "rapid_games_total": int(final_rapid.get("games", 0) or 0),
+            "rapid_rating": final_rapid.get("rating"),
+            "rapid_provisional": bool(final_rapid.get("prov")),
+            "log_path": str(log_path),
+            "profile_url": final_account.get("url"),
+        }
+    finally:
+        log_handle.close()

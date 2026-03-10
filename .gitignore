@@ -1,0 +1,34 @@
+.env
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Generated project artifacts
+data/raw/
+data/prepared/
+data/splits/
+data/models/
+data/reports/
+data/artifacts/
+
+# Local tool state
+.codex/

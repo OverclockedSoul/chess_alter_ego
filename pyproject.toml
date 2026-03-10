@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "restible-bot"
+version = "0.1.0"
+description = "Personalized Maia2 chess bot pipeline for restible"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "python-chess",
+  "requests",
+  "PyYAML",
+  "pandas",
+  "numpy",
+  "tqdm",
+  "python-dotenv",
+  "torch",
+  "gdown",
+  "einops",
+  "pyzstd",
+]
+
+[project.scripts]
+restible-bot = "restible_bot.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

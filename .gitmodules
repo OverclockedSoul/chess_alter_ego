@@ -1,0 +1,6 @@
+[submodule "third_party/maia2"]
+	path = third_party/maia2
+	url = https://github.com/CSSLab/maia2.git
+[submodule "third_party/lichess-bot"]
+	path = third_party/lichess-bot
+	url = https://github.com/lichess-bot-devs/lichess-bot.git

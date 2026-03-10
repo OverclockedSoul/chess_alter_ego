@@ -29,6 +29,7 @@ data/splits/
 data/models/
 data/reports/
 data/artifacts/
+lichess_bot_auto_logs/
 
 # Local tool state
 .codex/

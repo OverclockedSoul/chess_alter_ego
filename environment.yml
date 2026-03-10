@@ -1,0 +1,24 @@
+name: chess_clone
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pyyaml
+  - pandas
+  - numpy
+  - tqdm
+  - requests
+  - scikit-learn
+  - pip:
+      - python-chess
+      - python-dotenv
+      - gdown
+      - einops
+      - pyzstd
+      - -e .

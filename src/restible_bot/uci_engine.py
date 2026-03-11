@@ -36,8 +36,15 @@ def _parse_position(command: str) -> chess.Board:
             break
     return board
 
-
-def serve_uci(config_path: str | Path, checkpoint_path: str | Path) -> None:
+def serve_uci(
+    config_path: str | Path,
+    checkpoint_path: str | Path,
+    *,
+    selection_policy: str = "sample_probability_power",
+    min_probability: float = 0.20,
+    below_threshold_weight_scale: float = 0.25,
+    probability_exponent: float = 2.0,
+) -> None:
     config = load_config(config_path)
     checkpoint = Path(checkpoint_path).resolve()
     model, _device = load_inference_model(checkpoint)
@@ -80,7 +87,16 @@ def serve_uci(config_path: str | Path, checkpoint_path: str | Path) -> None:
         elif command.startswith("position"):
             board = _parse_position(command)
         elif command.startswith("go"):
-            inference = rank_moves(model, board.fen(), target_self_elo, target_self_elo)
+            inference = rank_moves(
+                model,
+                board.fen(),
+                target_self_elo,
+                target_self_elo,
+                selection_policy=selection_policy,
+                min_probability=min_probability,
+                below_threshold_weight_scale=below_threshold_weight_scale,
+                probability_exponent=probability_exponent,
+            )
             best_move = inference["best_move"]
             selected_probability = next(
                 move["probability"] for move in inference["moves"] if move["uci"] == best_move
@@ -98,8 +114,19 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/restible.yaml")
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--selection-policy", default="sample_probability_power")
+    parser.add_argument("--min-probability", type=float, default=0.20)
+    parser.add_argument("--below-threshold-weight-scale", type=float, default=0.25)
+    parser.add_argument("--probability-exponent", type=float, default=2.0)
     args = parser.parse_args()
-    serve_uci(args.config, args.checkpoint)
+    serve_uci(
+        args.config,
+        args.checkpoint,
+        selection_policy=args.selection_policy,
+        min_probability=args.min_probability,
+        below_threshold_weight_scale=args.below_threshold_weight_scale,
+        probability_exponent=args.probability_exponent,
+    )
 
 
 if __name__ == "__main__":

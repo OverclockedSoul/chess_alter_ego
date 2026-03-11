@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -62,6 +63,12 @@ def render_lichess_bot_config(
     opponent_min_rating: int | None = None,
     opponent_max_rating: int | None = None,
     opponent_rating_difference: int | None = 500,
+    accept_bot: bool = True,
+    accept_casual_challenges: bool = False,
+    selection_policy: str = "sample_probability_power",
+    min_probability: float = 0.20,
+    below_threshold_weight_scale: float = 0.25,
+    probability_exponent: float = 2.0,
 ) -> Path:
     root = project_root(config)
     checkpoint_path = (checkpoint_path or default_checkpoint_path(config)).resolve()
@@ -70,6 +77,7 @@ def render_lichess_bot_config(
 
     token = os.getenv(config["bot"]["token_env"], "SET_ME")
     mode = "rated" if rated else "casual"
+    challenge_modes = ["rated", "casual"] if rated and accept_casual_challenges else [mode]
     matchmaking: dict[str, Any] = {
         "allow_matchmaking": allow_matchmaking,
         "allow_during_games": allow_during_games,
@@ -100,6 +108,10 @@ def render_lichess_bot_config(
             "engine_options": {
                 "config": config["__config_path__"],
                 "checkpoint": str(checkpoint_path),
+                "selection-policy": selection_policy,
+                "min-probability": str(min_probability),
+                "below-threshold-weight-scale": str(below_threshold_weight_scale),
+                "probability-exponent": str(probability_exponent),
             },
             "uci_options": {
                 "Threads": 1,
@@ -113,10 +125,10 @@ def render_lichess_bot_config(
         "challenge": {
             "concurrency": concurrency,
             "variants": ["standard"],
-            "time_controls": ["rapid"],
-            "modes": [mode],
-            "accept_bot": True,
-            "only_bot": allow_matchmaking,
+            "time_controls": ["bullet", "blitz", "rapid"],
+            "modes": challenge_modes,
+            "accept_bot": accept_bot,
+            "only_bot": not accept_bot,
         },
         "matchmaking": matchmaking,
     }
@@ -159,6 +171,142 @@ def _active_game_count(playing_payload: dict[str, Any]) -> int:
     return int(playing_payload.get("playing", 0) or 0)
 
 
+def _fetch_game_export(config: dict[str, Any], game_id: str) -> dict[str, Any] | None:
+    base_url = config["lichess"]["base_url"].rstrip("/")
+    response = requests.get(
+        f"{base_url}/game/export/{game_id}",
+        headers={"Accept": "application/json"},
+        params={"moves": "false", "pgnInJson": "true"},
+        timeout=30,
+    )
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    if not response.text.strip():
+        return None
+    return json.loads(response.text)
+
+
+def _create_direct_challenge(
+    config: dict[str, Any],
+    username: str,
+    *,
+    rated: bool,
+    initial_time: int,
+    increment: int,
+) -> dict[str, Any]:
+    headers = _auth_headers(config)
+    base_url = config["lichess"]["base_url"].rstrip("/")
+    response = requests.post(
+        f"{base_url}/api/challenge/{username}",
+        headers=headers,
+        data={
+            "rated": str(rated).lower(),
+            "variant": "standard",
+            "clock.limit": initial_time,
+            "clock.increment": increment,
+        },
+        timeout=30,
+    )
+    body = response.json()
+    if response.status_code >= 400:
+        error_message = body.get("error") or body.get("global") or str(body)
+        raise RuntimeError(f"Challenge request to {username} failed: {error_message}")
+    return body
+
+
+def _run_direct_challenge_series(
+    process: subprocess.Popen[str],
+    config: dict[str, Any],
+    *,
+    username: str,
+    rated: bool,
+    initial_time: int,
+    increment: int,
+    max_games: int,
+    log_path: Path,
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    base_url = config["lichess"]["base_url"].rstrip("/")
+    headers = _auth_headers(config)
+    challenge_wait_seconds = max(120, initial_time * 4)
+    game_wait_seconds = max(900, initial_time * 8)
+
+    account_username = fetch_account_state(config)["account"]["username"]
+
+    def _score_from_game(game: dict[str, Any]) -> float:
+        players = game["players"]
+        white_name = players["white"]["user"]["name"]
+        black_name = players["black"]["user"]["name"]
+        winner = game.get("winner")
+        if winner is None:
+            return 0.5
+        if winner == "white":
+            return 1.0 if white_name == account_username else 0.0
+        return 1.0 if black_name == account_username else 0.0
+
+    for _ in range(max_games):
+        if process.poll() is not None:
+            raise RuntimeError(f"lichess-bot exited early with code {process.returncode}. See {log_path}.")
+
+        challenge = _create_direct_challenge(
+            config,
+            username,
+            rated=rated,
+            initial_time=initial_time,
+            increment=increment,
+        )
+        challenge_id = challenge.get("id")
+        if not challenge_id:
+            raise RuntimeError(f"Failed to create challenge for {username}: {challenge}")
+
+        challenge_deadline = time.time() + challenge_wait_seconds
+        while time.time() < challenge_deadline:
+            if process.poll() is not None:
+                raise RuntimeError(f"lichess-bot exited early with code {process.returncode}. See {log_path}.")
+            game = _fetch_game_export(config, challenge_id)
+            if game and game.get("status") != "created":
+                break
+            time.sleep(5)
+        else:
+            requests.post(f"{base_url}/api/challenge/{challenge_id}/cancel", headers=headers, timeout=30)
+            raise RuntimeError(f"Challenge {challenge_id} was not accepted in time. See {log_path}.")
+
+        game_deadline = time.time() + game_wait_seconds
+        while time.time() < game_deadline:
+            if process.poll() is not None:
+                raise RuntimeError(f"lichess-bot exited early with code {process.returncode}. See {log_path}.")
+            game = _fetch_game_export(config, challenge_id)
+            if game and game.get("status") not in {"created", "started"}:
+                score = _score_from_game(game)
+                results.append(
+                    {
+                        "game_id": challenge_id,
+                        "score": score,
+                        "status": game.get("status"),
+                        "winner": game.get("winner"),
+                    }
+                )
+                break
+            time.sleep(5)
+        else:
+            raise RuntimeError(f"Game {challenge_id} did not complete in time. See {log_path}.")
+
+    wins = sum(1 for item in results if item["score"] == 1.0)
+    draws = sum(1 for item in results if item["score"] == 0.5)
+    losses = sum(1 for item in results if item["score"] == 0.0)
+    return {
+        "username": account_username,
+        "opponent": username,
+        "games_completed": len(results),
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "score": sum(item["score"] for item in results),
+        "log_path": str(log_path),
+    }
+
+
 def run_lichess_bot(
     config: dict[str, Any],
     checkpoint_path: Path | None = None,
@@ -174,6 +322,12 @@ def run_lichess_bot(
     opponent_min_rating: int | None = None,
     opponent_max_rating: int | None = None,
     opponent_rating_difference: int | None = 500,
+    challenge_username: str | None = None,
+    accept_casual_challenges: bool = False,
+    selection_policy: str = "sample_probability_power",
+    min_probability: float = 0.20,
+    below_threshold_weight_scale: float = 0.25,
+    probability_exponent: float = 2.0,
 ) -> dict[str, Any] | None:
     _auth_headers(config)
     config_path = render_lichess_bot_config(
@@ -188,17 +342,29 @@ def run_lichess_bot(
         opponent_min_rating=opponent_min_rating,
         opponent_max_rating=opponent_max_rating,
         opponent_rating_difference=opponent_rating_difference,
+        accept_bot=challenge_username is None,
+        accept_casual_challenges=accept_casual_challenges,
+        selection_policy=selection_policy,
+        min_probability=min_probability,
+        below_threshold_weight_scale=below_threshold_weight_scale,
+        probability_exponent=probability_exponent,
     )
     root = project_root(config)
     command = [sys.executable, str(root / "third_party" / "lichess-bot" / "lichess-bot.py"), "--config", str(config_path)]
 
-    if not max_games and not max_runtime_seconds:
+    if challenge_username and not max_games:
+        raise ValueError("Direct challenge mode requires --max-games.")
+
+    if not max_games and not max_runtime_seconds and not challenge_username:
         subprocess.run(command, check=True, cwd=root)
         return None
 
     logs_dir = root / "lichess_bot_auto_logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-    log_name = "lichess-bot-max-games.log" if max_games else "lichess-bot-timed-run.log"
+    if challenge_username:
+        log_name = "lichess-bot-direct-challenge.log"
+    else:
+        log_name = "lichess-bot-max-games.log" if max_games else "lichess-bot-timed-run.log"
     log_path = logs_dir / log_name
     log_handle = log_path.open("a", encoding="utf-8")
 
@@ -239,6 +405,22 @@ def run_lichess_bot(
                 "log_path": str(log_path),
             }
         finally:
+            log_handle.close()
+
+    if challenge_username:
+        try:
+            return _run_direct_challenge_series(
+                process,
+                config,
+                username=challenge_username,
+                rated=rated,
+                initial_time=initial_time,
+                increment=increment,
+                max_games=max_games or 0,
+                log_path=log_path,
+            )
+        finally:
+            _stop_process()
             log_handle.close()
 
     initial_state = fetch_account_state(config)

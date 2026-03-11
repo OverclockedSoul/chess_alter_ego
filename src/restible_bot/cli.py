@@ -11,6 +11,22 @@ from .lichess_export import export_games
 from .train import train
 from .uci_engine import serve_uci
 
+SELECTION_POLICIES = [
+    "top1",
+    "sample_top2",
+    "sample_top3",
+    "sample_min_probability",
+    "sample_reweighted_below_threshold",
+    "sample_probability_power",
+]
+
+
+def _add_policy_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--selection-policy", choices=SELECTION_POLICIES, default="sample_probability_power")
+    parser.add_argument("--min-probability", type=float, default=0.20)
+    parser.add_argument("--below-threshold-weight-scale", type=float, default=0.25)
+    parser.add_argument("--probability-exponent", type=float, default=2.0)
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="restible-bot")
@@ -38,9 +54,12 @@ def _build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--opponent-max-rating", type=int)
     render_parser.add_argument("--opponent-rating-difference", type=int)
     render_parser.add_argument("--output")
+    render_parser.add_argument("--accept-casual-challenges", action="store_true")
+    _add_policy_args(render_parser)
 
     uci_parser = subparsers.add_parser("run-uci")
     uci_parser.add_argument("--checkpoint", required=True)
+    _add_policy_args(uci_parser)
 
     bot_parser = subparsers.add_parser("run-lichess-bot")
     bot_parser.add_argument("--checkpoint")
@@ -55,6 +74,9 @@ def _build_parser() -> argparse.ArgumentParser:
     bot_parser.add_argument("--opponent-min-rating", type=int)
     bot_parser.add_argument("--opponent-max-rating", type=int)
     bot_parser.add_argument("--opponent-rating-difference", type=int)
+    bot_parser.add_argument("--challenge-user")
+    bot_parser.add_argument("--accept-casual-challenges", action="store_true")
+    _add_policy_args(bot_parser)
 
     verify_parser = subparsers.add_parser("verify-bot")
     verify_parser.add_argument("--checkpoint")
@@ -112,12 +134,24 @@ def main() -> None:
                 opponent_min_rating=args.opponent_min_rating,
                 opponent_max_rating=args.opponent_max_rating,
                 opponent_rating_difference=opponent_rating_difference,
+                accept_casual_challenges=args.accept_casual_challenges,
+                selection_policy=args.selection_policy,
+                min_probability=args.min_probability,
+                below_threshold_weight_scale=args.below_threshold_weight_scale,
+                probability_exponent=args.probability_exponent,
             )
         )
         return
 
     if args.command == "run-uci":
-        serve_uci(config["__config_path__"], args.checkpoint)
+        serve_uci(
+            config["__config_path__"],
+            args.checkpoint,
+            selection_policy=args.selection_policy,
+            min_probability=args.min_probability,
+            below_threshold_weight_scale=args.below_threshold_weight_scale,
+            probability_exponent=args.probability_exponent,
+        )
         return
 
     if args.command == "run-lichess-bot":
@@ -137,6 +171,12 @@ def main() -> None:
             opponent_min_rating=args.opponent_min_rating,
             opponent_max_rating=args.opponent_max_rating,
             opponent_rating_difference=opponent_rating_difference,
+            challenge_username=args.challenge_user,
+            accept_casual_challenges=args.accept_casual_challenges,
+            selection_policy=args.selection_policy,
+            min_probability=args.min_probability,
+            below_threshold_weight_scale=args.below_threshold_weight_scale,
+            probability_exponent=args.probability_exponent,
         )
         if result is not None:
             print(result)

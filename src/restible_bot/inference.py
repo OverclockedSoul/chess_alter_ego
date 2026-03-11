@@ -29,11 +29,63 @@ def load_inference_model(
     return model, device
 
 
+def _select_move(
+    ranked_moves: list[dict[str, Any]],
+    *,
+    selection_policy: str,
+    min_probability: float,
+    below_threshold_weight_scale: float,
+    probability_exponent: float,
+) -> tuple[str, list[dict[str, Any]]]:
+    if not ranked_moves:
+        raise ValueError("ranked_moves must not be empty")
+
+    if selection_policy == "top1":
+        return ranked_moves[0]["uci"], ranked_moves[:1]
+    if selection_policy == "sample_top2":
+        sample_pool = ranked_moves[: min(2, len(ranked_moves))]
+        weights = [move["probability"] for move in sample_pool]
+        if sum(weights) <= 0:
+            weights = None
+        selected_move = random.choices(sample_pool, weights=weights, k=1)[0]["uci"]
+        return selected_move, sample_pool
+
+    if selection_policy == "sample_top3":
+        sample_pool = ranked_moves[: min(3, len(ranked_moves))]
+        weights = [move["probability"] for move in sample_pool]
+    elif selection_policy == "sample_min_probability":
+        sample_pool = [move for move in ranked_moves if move["probability"] >= min_probability]
+        if not sample_pool:
+            sample_pool = ranked_moves[:1]
+        weights = [move["probability"] for move in sample_pool]
+    elif selection_policy == "sample_reweighted_below_threshold":
+        sample_pool = list(ranked_moves)
+        weights = [
+            move["probability"] if move["probability"] >= min_probability else move["probability"] * below_threshold_weight_scale
+            for move in sample_pool
+        ]
+    elif selection_policy == "sample_probability_power":
+        sample_pool = list(ranked_moves)
+        weights = [move["probability"] ** probability_exponent for move in sample_pool]
+    else:
+        raise ValueError(f"Unsupported selection_policy: {selection_policy}")
+
+    if sum(weights) <= 0:
+        weights = None
+    selected_move = random.choices(sample_pool, weights=weights, k=1)[0]["uci"]
+    return selected_move, sample_pool
+
+
 def rank_moves(
     model: Maia2MoveModel,
     fen: str,
     elo_self: int,
     elo_oppo: int,
+    *,
+    selection_policy: str = "sample_probability_power",
+    min_probability: float = 0.20,
+    below_threshold_weight_scale: float = 0.25,
+    probability_exponent: float = 2.0,
 ) -> dict[str, Any]:
     _ensure_maia2_path()
     from maia2.utils import board_to_tensor, map_to_category, mirror_move
@@ -70,15 +122,21 @@ def rank_moves(
             }
         )
     ranked_moves.sort(key=lambda item: item["probability"], reverse=True)
-    sample_pool = ranked_moves[: min(3, len(ranked_moves))]
-    weights = [move["probability"] for move in sample_pool]
-    if sum(weights) <= 0:
-        weights = None
-    selected_move = random.choices(sample_pool, weights=weights, k=1)[0]["uci"]
+    selected_move, sample_pool = _select_move(
+        ranked_moves,
+        selection_policy=selection_policy,
+        min_probability=min_probability,
+        below_threshold_weight_scale=below_threshold_weight_scale,
+        probability_exponent=probability_exponent,
+    )
     return {
         "fen": fen,
         "best_move": selected_move,
         "top_move": ranked_moves[0]["uci"],
         "sample_pool": sample_pool,
+        "selection_policy": selection_policy,
+        "min_probability": min_probability,
+        "below_threshold_weight_scale": below_threshold_weight_scale,
+        "probability_exponent": probability_exponent,
         "moves": ranked_moves,
     }

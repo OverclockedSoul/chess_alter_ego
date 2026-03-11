@@ -26,6 +26,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "min_player_elo": 1800,
         "test_fraction": 0.20,
         "validation_fraction_within_train": 0.10,
+        "split_seed": 42,
     },
     "training": {
         "target_self_elo": 1900,

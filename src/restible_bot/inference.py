@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import random
 import sys
 from typing import Any
 
@@ -69,10 +70,15 @@ def rank_moves(
             }
         )
     ranked_moves.sort(key=lambda item: item["probability"], reverse=True)
-    best_move = ranked_moves[0]["uci"]
+    sample_pool = ranked_moves[: min(3, len(ranked_moves))]
+    weights = [move["probability"] for move in sample_pool]
+    if sum(weights) <= 0:
+        weights = None
+    selected_move = random.choices(sample_pool, weights=weights, k=1)[0]["uci"]
     return {
         "fen": fen,
-        "best_move": best_move,
+        "best_move": selected_move,
+        "top_move": ranked_moves[0]["uci"],
+        "sample_pool": sample_pool,
         "moves": ranked_moves,
     }
-

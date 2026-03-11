@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 import math
 from pathlib import Path
+import random
 import sys
 from typing import Any
 
@@ -128,17 +129,21 @@ def _split_games(
     games: list[dict[str, Any]],
     test_fraction: float,
     validation_fraction_within_train: float,
+    split_seed: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     if not games:
         raise RuntimeError("No eligible games were available to split.")
+
+    shuffled_games = list(games)
+    random.Random(split_seed).shuffle(shuffled_games)
 
     total_games = len(games)
     test_count = max(1, math.ceil(total_games * test_fraction))
     if total_games > 1:
         test_count = min(test_count, total_games - 1)
     test_start = total_games - test_count
-    development_games = games[:test_start]
-    test_games = games[test_start:]
+    development_games = shuffled_games[:test_start]
+    test_games = shuffled_games[test_start:]
 
     if not development_games:
         return [], [], test_games
@@ -190,11 +195,11 @@ def prepare_dataset(config: dict[str, Any], raw_pgn: Path | None = None) -> dict
             continue
         eligible_games.append(record)
 
-    eligible_games.sort(key=lambda item: item["sort_key"])
     train_games, val_games, test_games = _split_games(
         eligible_games,
         float(config["dataset"]["test_fraction"]),
         float(config["dataset"]["validation_fraction_within_train"]),
+        int(config["dataset"]["split_seed"]),
     )
 
     prepared_path = _prepared_dir(config) / "restible_games.jsonl"
@@ -223,6 +228,8 @@ def prepare_dataset(config: dict[str, Any], raw_pgn: Path | None = None) -> dict
         "test_positions": _position_count(test_games),
         "test_fraction_requested": float(config["dataset"]["test_fraction"]),
         "validation_fraction_within_train_requested": float(config["dataset"]["validation_fraction_within_train"]),
+        "split_strategy": "random_by_game",
+        "split_seed": int(config["dataset"]["split_seed"]),
         "skipped": skipped,
     }
     write_json(summary_path, summary)
@@ -346,4 +353,3 @@ class RestibleMoveDataset(torch.utils.data.Dataset):
             sample["game_id"],
             torch.tensor(sample["move_index"], dtype=torch.long),
         )
-

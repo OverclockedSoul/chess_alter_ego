@@ -82,8 +82,10 @@ def serve_uci(config_path: str | Path, checkpoint_path: str | Path) -> None:
         elif command.startswith("go"):
             inference = rank_moves(model, board.fen(), target_self_elo, target_self_elo)
             best_move = inference["best_move"]
-            best_probability = inference["moves"][0]["probability"]
-            print(f"info depth 1 nodes 1 score cp 0 pv {best_move} string prob={best_probability:.4f}")
+            selected_probability = next(
+                move["probability"] for move in inference["moves"] if move["uci"] == best_move
+            )
+            print(f"info depth 1 nodes 1 score cp 0 pv {best_move} string prob={selected_probability:.4f}")
             print(f"bestmove {best_move}")
             sys.stdout.flush()
         elif command in {"stop", "ponderhit"}:

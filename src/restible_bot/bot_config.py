@@ -52,21 +52,40 @@ def render_lichess_bot_config(
     config: dict[str, Any],
     checkpoint_path: Path | None = None,
     *,
+    output_path: str | Path | None = None,
     allow_matchmaking: bool = False,
     rated: bool = False,
     initial_time: int = 480,
     increment: int = 0,
     concurrency: int = 1,
     allow_during_games: bool = False,
-    opponent_rating_difference: int = 500,
+    opponent_min_rating: int | None = None,
+    opponent_max_rating: int | None = None,
+    opponent_rating_difference: int | None = 500,
 ) -> Path:
     root = project_root(config)
     checkpoint_path = (checkpoint_path or default_checkpoint_path(config)).resolve()
-    output_path = resolve_path(config, config["bot"]["config_output"])
-    ensure_parent(output_path)
+    rendered_output_path = resolve_path(config, output_path or config["bot"]["config_output"])
+    ensure_parent(rendered_output_path)
 
     token = os.getenv(config["bot"]["token_env"], "SET_ME")
     mode = "rated" if rated else "casual"
+    matchmaking: dict[str, Any] = {
+        "allow_matchmaking": allow_matchmaking,
+        "allow_during_games": allow_during_games,
+        "challenge_timeout": 1,
+        "challenge_initial_time": [initial_time],
+        "challenge_increment": [increment],
+        "challenge_mode": mode,
+        "rating_preference": "none",
+    }
+    if opponent_min_rating is not None:
+        matchmaking["opponent_min_rating"] = opponent_min_rating
+    if opponent_max_rating is not None:
+        matchmaking["opponent_max_rating"] = opponent_max_rating
+    if opponent_rating_difference is not None:
+        matchmaking["opponent_rating_difference"] = opponent_rating_difference
+
     payload: dict[str, Any] = {
         "token": token,
         "url": config["lichess"]["base_url"].rstrip("/") + "/",
@@ -99,19 +118,10 @@ def render_lichess_bot_config(
             "accept_bot": True,
             "only_bot": allow_matchmaking,
         },
-        "matchmaking": {
-            "allow_matchmaking": allow_matchmaking,
-            "allow_during_games": allow_during_games,
-            "challenge_timeout": 1,
-            "challenge_initial_time": [initial_time],
-            "challenge_increment": [increment],
-            "opponent_rating_difference": opponent_rating_difference,
-            "challenge_mode": mode,
-            "rating_preference": "none",
-        },
+        "matchmaking": matchmaking,
     }
-    output_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
-    return output_path
+    rendered_output_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return rendered_output_path
 
 
 def verify_local_bot_setup(config: dict[str, Any], checkpoint_path: Path | None = None) -> dict[str, Any]:
@@ -154,12 +164,16 @@ def run_lichess_bot(
     checkpoint_path: Path | None = None,
     *,
     max_games: int | None = None,
+    max_runtime_seconds: int | None = None,
     allow_matchmaking: bool = False,
     rated: bool = False,
     initial_time: int = 480,
     increment: int = 0,
     concurrency: int = 1,
     poll_interval_seconds: int = 30,
+    opponent_min_rating: int | None = None,
+    opponent_max_rating: int | None = None,
+    opponent_rating_difference: int | None = 500,
 ) -> dict[str, Any] | None:
     _auth_headers(config)
     config_path = render_lichess_bot_config(
@@ -171,24 +185,21 @@ def run_lichess_bot(
         increment=increment,
         concurrency=concurrency,
         allow_during_games=allow_matchmaking,
+        opponent_min_rating=opponent_min_rating,
+        opponent_max_rating=opponent_max_rating,
+        opponent_rating_difference=opponent_rating_difference,
     )
     root = project_root(config)
     command = [sys.executable, str(root / "third_party" / "lichess-bot" / "lichess-bot.py"), "--config", str(config_path)]
 
-    if not max_games:
+    if not max_games and not max_runtime_seconds:
         subprocess.run(command, check=True, cwd=root)
         return None
 
-    initial_state = fetch_account_state(config)
-    initial_account = initial_state["account"]
-    initial_rapid = _rapid_perf(initial_account)
-    username = initial_account["username"]
-    baseline_games = int(initial_rapid.get("games", 0) or 0)
-    target_games = baseline_games + max_games
-
     logs_dir = root / "lichess_bot_auto_logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-    log_path = logs_dir / "lichess-bot-max-games.log"
+    log_name = "lichess-bot-max-games.log" if max_games else "lichess-bot-timed-run.log"
+    log_path = logs_dir / log_name
     log_handle = log_path.open("a", encoding="utf-8")
 
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -199,6 +210,43 @@ def run_lichess_bot(
         stderr=subprocess.STDOUT,
         creationflags=creationflags,
     )
+
+    def _stop_process() -> None:
+        try:
+            if creationflags:
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                process.terminate()
+            process.wait(timeout=30)
+        except Exception:
+            process.kill()
+            process.wait(timeout=30)
+
+    if max_runtime_seconds:
+        deadline = time.time() + max_runtime_seconds
+        try:
+            while True:
+                if process.poll() is not None:
+                    raise RuntimeError(f"lichess-bot exited early with code {process.returncode}. See {log_path}.")
+                remaining_seconds = max(0, int(deadline - time.time()))
+                print(f"Timed run active. Remaining seconds: {remaining_seconds}", flush=True)
+                if remaining_seconds <= 0:
+                    break
+                time.sleep(min(60, remaining_seconds))
+            _stop_process()
+            return {
+                "timed_run_seconds": max_runtime_seconds,
+                "log_path": str(log_path),
+            }
+        finally:
+            log_handle.close()
+
+    initial_state = fetch_account_state(config)
+    initial_account = initial_state["account"]
+    initial_rapid = _rapid_perf(initial_account)
+    username = initial_account["username"]
+    baseline_games = int(initial_rapid.get("games", 0) or 0)
+    target_games = baseline_games + max_games
 
     try:
         while True:
@@ -222,15 +270,7 @@ def run_lichess_bot(
                 break
             time.sleep(poll_interval_seconds)
 
-        try:
-            if creationflags:
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                process.terminate()
-            process.wait(timeout=30)
-        except Exception:
-            process.kill()
-            process.wait(timeout=30)
+        _stop_process()
 
         final_state = fetch_account_state(config)
         final_account = final_state["account"]

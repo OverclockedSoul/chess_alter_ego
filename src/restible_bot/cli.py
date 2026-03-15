@@ -18,6 +18,7 @@ SELECTION_POLICIES = [
     "sample_min_probability",
     "sample_reweighted_below_threshold",
     "sample_probability_power",
+    "sample_probability_times_win_probability",
 ]
 
 

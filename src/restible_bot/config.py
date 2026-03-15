@@ -30,6 +30,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "training": {
         "target_self_elo": 1900,
+        "output_suffix": "",
+        "override_self_elo": None,
+        "override_opponent_elo": None,
         "smoke": {
             "train_positions": 2000,
             "val_positions": 500,

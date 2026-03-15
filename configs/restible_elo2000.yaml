@@ -1,0 +1,34 @@
+project:
+  root: .
+  data_dir: data
+
+lichess:
+  username: restible
+  base_url: https://lichess.org
+  token_env: LICHESS_TOKEN
+
+dataset:
+  speed: rapid
+  min_player_elo: 1800
+  test_fraction: 0.20
+  validation_fraction_within_train: 0.10
+  split_seed: 42
+
+training:
+  target_self_elo: 2000
+  output_suffix: elo2000
+  override_self_elo: 2000
+  override_opponent_elo: 2000
+  smoke:
+    train_positions: 2000
+    val_positions: 500
+    phase1_epochs: 1
+    phase2_epochs: 1
+  full:
+    phase1_epochs: 1
+    phase2_max_epochs: 8
+    early_stopping_patience: 2
+
+bot:
+  token_env: LICHESS_BOT_TOKEN
+  config_output: data/artifacts/lichess-bot/config.yml

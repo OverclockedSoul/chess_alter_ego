@@ -15,12 +15,20 @@ from .maia2_model import Maia2MoveModel, checkpoint_payload, load_pretrained_mod
 from .utils import detect_device, device_summary, write_json
 
 
+def _output_suffix(config: dict[str, Any]) -> str:
+    return str(config["training"].get("output_suffix") or "").strip()
+
+
 def _models_dir(config: dict[str, Any], mode: str) -> Path:
-    return data_dir(config) / "models" / mode
+    suffix = _output_suffix(config)
+    model_dir = mode if not suffix else f"{mode}_{suffix}"
+    return data_dir(config) / "models" / model_dir
 
 
 def _validation_metrics_path(config: dict[str, Any]) -> Path:
-    return data_dir(config) / "reports" / "validation_metrics.json"
+    suffix = _output_suffix(config)
+    file_name = "validation_metrics.json" if not suffix else f"validation_metrics_{suffix}.json"
+    return data_dir(config) / "reports" / file_name
 
 
 def _batch_size(device: torch.device, mode: str) -> int:
@@ -31,13 +39,28 @@ def _batch_size(device: torch.device, mode: str) -> int:
 
 def _build_dataloaders(config: dict[str, Any], mode: str) -> tuple[RestibleMoveDataset, RestibleMoveDataset]:
     paths = latest_split_paths(config)
+    override_self_elo = config["training"].get("override_self_elo")
+    override_opponent_elo = config["training"].get("override_opponent_elo")
     if mode == "smoke":
         train_limit = int(config["training"]["smoke"]["train_positions"])
         val_limit = int(config["training"]["smoke"]["val_positions"])
     else:
         train_limit = 0
         val_limit = 0
-    return RestibleMoveDataset(paths["train"], train_limit), RestibleMoveDataset(paths["val"], val_limit)
+    return (
+        RestibleMoveDataset(
+            paths["train"],
+            train_limit,
+            override_self_elo=override_self_elo,
+            override_opponent_elo=override_opponent_elo,
+        ),
+        RestibleMoveDataset(
+            paths["val"],
+            val_limit,
+            override_self_elo=override_self_elo,
+            override_opponent_elo=override_opponent_elo,
+        ),
+    )
 
 
 def _save_checkpoint(

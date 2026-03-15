@@ -29,6 +29,44 @@ def load_inference_model(
     return model, device
 
 
+def _post_move_win_probabilities(
+    model: Maia2MoveModel,
+    board: chess.Board,
+    elo_self: int,
+    elo_oppo: int,
+) -> dict[str, float]:
+    _ensure_maia2_path()
+    from maia2.utils import board_to_tensor, map_to_category
+
+    resources = maia2_resources()
+    elo_dict = resources["elo_dict"]
+    device = next(model.parameters()).device
+
+    legal_moves = [move.uci() for move in board.legal_moves]
+    if not legal_moves:
+        return {}
+
+    board_tensors: list[torch.Tensor] = []
+    for move_uci in legal_moves:
+        next_board = board.copy(stack=False)
+        next_board.push_uci(move_uci)
+        oriented_next_board = next_board if next_board.turn == chess.WHITE else next_board.mirror()
+        board_tensors.append(board_to_tensor(oriented_next_board))
+
+    boards_tensor = torch.stack(board_tensors, dim=0).to(device)
+    next_self_bucket = map_to_category(elo_oppo, elo_dict)
+    next_oppo_bucket = map_to_category(elo_self, elo_dict)
+    elos_self = torch.full((len(legal_moves),), next_self_bucket, dtype=torch.long, device=device)
+    elos_oppo = torch.full((len(legal_moves),), next_oppo_bucket, dtype=torch.long, device=device)
+
+    with torch.no_grad():
+        _, _, logits_value = model.backbone(boards_tensor, elos_self, elos_oppo)
+        opponent_scores = (logits_value / 2 + 0.5).clamp(0, 1)
+        mover_scores = 1.0 - opponent_scores
+
+    return {move_uci: float(score.item()) for move_uci, score in zip(legal_moves, mover_scores)}
+
+
 def _select_move(
     ranked_moves: list[dict[str, Any]],
     *,
@@ -67,6 +105,9 @@ def _select_move(
     elif selection_policy == "sample_probability_power":
         sample_pool = list(ranked_moves)
         weights = [move["probability"] ** probability_exponent for move in sample_pool]
+    elif selection_policy == "sample_probability_times_win_probability":
+        sample_pool = list(ranked_moves)
+        weights = [move["selection_weight"] for move in sample_pool]
     else:
         raise ValueError(f"Unsupported selection_policy: {selection_policy}")
 
@@ -122,6 +163,11 @@ def rank_moves(
             }
         )
     ranked_moves.sort(key=lambda item: item["probability"], reverse=True)
+    if selection_policy == "sample_probability_times_win_probability":
+        move_win_probabilities = _post_move_win_probabilities(model, board, elo_self, elo_oppo)
+        for move in ranked_moves:
+            move["post_move_win_probability"] = move_win_probabilities[move["uci"]]
+            move["selection_weight"] = move["probability"] * move["post_move_win_probability"]
     selected_move, sample_pool = _select_move(
         ranked_moves,
         selection_policy=selection_policy,

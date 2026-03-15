@@ -15,6 +15,18 @@ def _reports_dir(config: dict[str, Any]) -> Path:
     return data_dir(config) / "reports"
 
 
+def _output_suffix(config: dict[str, Any]) -> str:
+    return str(config["training"].get("output_suffix") or "").strip()
+
+
+def _report_file_name(config: dict[str, Any], base_name: str) -> str:
+    suffix = _output_suffix(config)
+    if not suffix:
+        return base_name
+    stem, extension = base_name.rsplit(".", 1)
+    return f"{stem}_{suffix}.{extension}"
+
+
 def _phase_name(ply: int) -> str:
     if ply <= 15:
         return "opening"
@@ -149,16 +161,22 @@ def evaluate_checkpoint(
         raise ValueError("Supported splits are 'val' and 'test'.")
 
     device = device or detect_device()
-    dataset = RestibleMoveDataset(paths[split])
+    dataset = RestibleMoveDataset(
+        paths[split],
+        override_self_elo=config["training"].get("override_self_elo"),
+        override_opponent_elo=config["training"].get("override_opponent_elo"),
+    )
     model, _ = load_checkpoint_model(checkpoint_path=checkpoint_path, device=device)
     batch_size = 128 if device.type == "cuda" else 32
     metrics = evaluate_model(model, dataset, device=device, split=split, batch_size=batch_size)
 
     reports_dir = _reports_dir(config)
-    json_path = reports_dir / ("validation_metrics.json" if split == "val" else "test_metrics.json")
+    json_path = reports_dir / _report_file_name(
+        config,
+        "validation_metrics.json" if split == "val" else "test_metrics.json",
+    )
     write_json(json_path, metrics)
     if split == "test":
-        markdown_path = reports_dir / "test_metrics.md"
+        markdown_path = reports_dir / _report_file_name(config, "test_metrics.md")
         markdown_path.write_text(_markdown_report(metrics), encoding="utf-8")
     return metrics
-

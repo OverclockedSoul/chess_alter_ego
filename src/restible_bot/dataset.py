@@ -308,7 +308,14 @@ def _position_sample(
 
 
 class RestibleMoveDataset(torch.utils.data.Dataset):
-    def __init__(self, split_path: Path, limit_positions: int = 0) -> None:
+    def __init__(
+        self,
+        split_path: Path,
+        limit_positions: int = 0,
+        *,
+        override_self_elo: int | None = None,
+        override_opponent_elo: int | None = None,
+    ) -> None:
         records = read_jsonl(split_path)
         samples: list[dict[str, Any]] = []
         for record in records:
@@ -319,8 +326,14 @@ class RestibleMoveDataset(torch.utils.data.Dataset):
                         "fen": position["fen"],
                         "move_uci": position["move_uci"],
                         "move_index": int(position["move_index"]),
-                        "restible_elo": int(record["restible_elo"]),
-                        "opponent_elo": int(record["opponent_elo"]),
+                        "restible_elo": (
+                            int(override_self_elo) if override_self_elo is not None else int(record["restible_elo"])
+                        ),
+                        "opponent_elo": (
+                            int(override_opponent_elo)
+                            if override_opponent_elo is not None
+                            else int(record["opponent_elo"])
+                        ),
                     }
                 )
                 if limit_positions and len(samples) >= limit_positions:

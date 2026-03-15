@@ -38,17 +38,14 @@ The system SHALL build the personalized corpus from rapid games only, discard ga
 - **AND** stores per-position samples with `game_id`, `fen`, `move_uci`, `move_index`, `restible_elo`, `opponent_elo`, `color`, `utc_date`, `utc_time`, and `source_pgn`
 - **AND** writes game-level records to `data/prepared/restible_games.jsonl`
 
-### Requirement: Split data chronologically by game
+### Requirement: Split data randomly
 
-The system SHALL split the eligible corpus by game chronology rather than by position so the newest eligible games remain fully held out for evaluation.
+The system SHALL split the eligible corpus randomly
 
 #### Scenario: Create train, validation, and test splits
 
 - **WHEN** eligible games are prepared for splitting
-- **THEN** the system sorts games by `UTCDate + UTCTime`
-- **AND** assigns the newest 20% of eligible games to the test split
-- **AND** assigns the remaining 80% to the development pool
-- **AND** reserves the newest 10% of the development pool as the validation split
+- **THEN** games are splitted 80% training 10% validation 10% test randomly
 - **AND** writes `train_games.jsonl`, `val_games.jsonl`, `test_games.jsonl`, and `split_summary.json` under `data/splits/`
 
 ### Requirement: Fine-tune from the upstream Maia2 rapid checkpoint

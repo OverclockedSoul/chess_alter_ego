@@ -16,6 +16,7 @@ COPY src ./src
 COPY third_party ./third_party
 COPY data/models/full/best.pt ./data/models/full/best.pt
 
+RUN pip install --no-cache-dir ./third_party/maia2
 RUN pip install --no-cache-dir .
 RUN python -c "import torch; from restible_bot.maia2_model import load_pretrained_model; load_pretrained_model(torch.device('cpu'))"
 

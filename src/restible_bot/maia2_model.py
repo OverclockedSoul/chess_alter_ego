@@ -9,9 +9,19 @@ from torch import nn
 
 
 def _ensure_maia2_path() -> None:
-    maia2_root = Path(__file__).resolve().parents[2] / "third_party" / "maia2"
-    if str(maia2_root) not in sys.path:
-        sys.path.insert(0, str(maia2_root))
+    try:
+        import maia2  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+
+    for maia2_root in [
+        Path(__file__).resolve().parents[2] / "third_party" / "maia2",
+        Path.cwd() / "third_party" / "maia2",
+    ]:
+        if maia2_root.exists() and str(maia2_root) not in sys.path:
+            sys.path.insert(0, str(maia2_root))
+            return
 
 
 class Maia2MoveModel(nn.Module):

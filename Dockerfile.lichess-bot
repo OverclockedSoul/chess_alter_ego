@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+ENV CHESS_BOT_URL=http://127.0.0.1:8001 \
+    LICHESS_BOT_CONFIG=/app/data/artifacts/lichess-bot/http-config.yml \
+    LICHESS_BOT_DOCKER=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY third_party/lichess-bot ./third_party/lichess-bot
+
+RUN pip install --no-cache-dir -r third_party/lichess-bot/requirements.txt \
+    && pip install --no-cache-dir --no-deps . \
+    && chmod +x src/restible_bot/http_uci_engine.py third_party/lichess-bot/lichess-bot.py
+
+CMD ["sh", "-c", "python -m restible_bot.http_bot_config --output \"$LICHESS_BOT_CONFIG\" --project-root /app && python third_party/lichess-bot/lichess-bot.py --config \"$LICHESS_BOT_CONFIG\""]

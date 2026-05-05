@@ -136,6 +136,34 @@ restible-bot run-lichess-bot --checkpoint data/models/full/best.pt --challenge-u
 restible-bot run-lichess-bot --checkpoint data/models/full/best.pt --run-hours 2
 ```
 
+## Run Split Containers
+
+The default `Dockerfile` remains the FastAPI/model-serving image. It loads the PyTorch model and exposes `/move`:
+
+```bash
+docker build -t restible-engine -f Dockerfile .
+docker run --rm -p 8001:8001 restible-engine
+```
+
+The model server defaults to `CHESS_BOT_SELECTION_POLICY=sample_probability_power_3ply_win_probability`, `CHESS_BOT_PROBABILITY_EXPONENT=2.0`, `CHESS_BOT_SEARCH_TOP_K=3`, and `CHESS_BOT_SEARCH_PLIES=3`.
+
+`Dockerfile.lichess-bot` is the lightweight Lichess runner. It does not start FastAPI and its UCI adapter calls `POST {CHESS_BOT_URL}/move` with `{ "fen": board.fen() }`.
+
+```bash
+docker build -t restible-lichess-bot -f Dockerfile.lichess-bot .
+docker run --rm \
+  -e LICHESS_BOT_TOKEN="$LICHESS_BOT_TOKEN" \
+  -e CHESS_BOT_URL="http://host.docker.internal:8001" \
+  restible-lichess-bot
+```
+
+Required env:
+
+- `LICHESS_BOT_TOKEN`: Lichess bot OAuth token.
+- `CHESS_BOT_URL`: model API base URL. Defaults to `http://127.0.0.1:8001`.
+
+The split runner accepts incoming standard casual challenges from humans or bots, allows at most 3 parallel games, and enforces `clock.limit <= 1800` seconds through `challenge.max_base`.
+
 ## Move-Selection Modes
 
 The training modes are only `smoke` and `full`. The play-style modes such as `p^2` and `p*win` are exposed as inference `--selection-policy` options.

@@ -58,17 +58,21 @@ def render_lichess_bot_config(
     rated: bool = False,
     initial_time: int = 480,
     increment: int = 0,
+    time_controls: list[str] | None = None,
     concurrency: int = 1,
     allow_during_games: bool = False,
     opponent_min_rating: int | None = None,
     opponent_max_rating: int | None = None,
     opponent_rating_difference: int | None = 500,
     accept_bot: bool = True,
+    only_bot_challenges: bool = False,
     accept_casual_challenges: bool = False,
     selection_policy: str = "sample_probability_power",
     min_probability: float = 0.20,
     below_threshold_weight_scale: float = 0.25,
     probability_exponent: float = 2.0,
+    search_top_k: int = 3,
+    search_plies: int = 3,
 ) -> Path:
     root = project_root(config)
     checkpoint_path = (checkpoint_path or default_checkpoint_path(config)).resolve()
@@ -112,6 +116,8 @@ def render_lichess_bot_config(
                 "min-probability": str(min_probability),
                 "below-threshold-weight-scale": str(below_threshold_weight_scale),
                 "probability-exponent": str(probability_exponent),
+                "search-top-k": str(search_top_k),
+                "search-plies": str(search_plies),
             },
             "uci_options": {
                 "Threads": 1,
@@ -125,10 +131,12 @@ def render_lichess_bot_config(
         "challenge": {
             "concurrency": concurrency,
             "variants": ["standard"],
-            "time_controls": ["bullet", "blitz", "rapid"],
+            "time_controls": time_controls or ["bullet", "blitz", "rapid"],
             "modes": challenge_modes,
             "accept_bot": accept_bot,
-            "only_bot": not accept_bot,
+            "only_bot": only_bot_challenges,
+            "opponent_min_rating": opponent_min_rating,
+            "opponent_max_rating": opponent_max_rating,
         },
         "matchmaking": matchmaking,
     }
@@ -317,6 +325,7 @@ def run_lichess_bot(
     rated: bool = False,
     initial_time: int = 480,
     increment: int = 0,
+    time_controls: list[str] | None = None,
     concurrency: int = 1,
     poll_interval_seconds: int = 30,
     opponent_min_rating: int | None = None,
@@ -324,10 +333,13 @@ def run_lichess_bot(
     opponent_rating_difference: int | None = 500,
     challenge_username: str | None = None,
     accept_casual_challenges: bool = False,
+    only_bot_challenges: bool = False,
     selection_policy: str = "sample_probability_power",
     min_probability: float = 0.20,
     below_threshold_weight_scale: float = 0.25,
     probability_exponent: float = 2.0,
+    search_top_k: int = 3,
+    search_plies: int = 3,
 ) -> dict[str, Any] | None:
     _auth_headers(config)
     config_path = render_lichess_bot_config(
@@ -337,17 +349,21 @@ def run_lichess_bot(
         rated=rated,
         initial_time=initial_time,
         increment=increment,
+        time_controls=time_controls,
         concurrency=concurrency,
         allow_during_games=allow_matchmaking,
         opponent_min_rating=opponent_min_rating,
         opponent_max_rating=opponent_max_rating,
         opponent_rating_difference=opponent_rating_difference,
         accept_bot=challenge_username is None,
+        only_bot_challenges=only_bot_challenges,
         accept_casual_challenges=accept_casual_challenges,
         selection_policy=selection_policy,
         min_probability=min_probability,
         below_threshold_weight_scale=below_threshold_weight_scale,
         probability_exponent=probability_exponent,
+        search_top_k=search_top_k,
+        search_plies=search_plies,
     )
     root = project_root(config)
     command = [sys.executable, str(root / "third_party" / "lichess-bot" / "lichess-bot.py"), "--config", str(config_path)]

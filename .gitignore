@@ -38,3 +38,4 @@ lichess_bot_auto_logs/
 
 # Local tool state
 .codex/
+tmp.py

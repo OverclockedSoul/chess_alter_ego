@@ -7,6 +7,7 @@ from .bot_config import render_lichess_bot_config, run_lichess_bot, verify_local
 from .config import load_config
 from .evaluate import evaluate_checkpoint
 from .dataset import prepare_dataset
+from .http_bot_config import render_http_lichess_bot_config
 from .lichess_export import export_games
 from .train import train
 from .uci_engine import serve_uci
@@ -19,6 +20,7 @@ SELECTION_POLICIES = [
     "sample_reweighted_below_threshold",
     "sample_probability_power",
     "sample_probability_times_win_probability",
+    "sample_probability_power_3ply_win_probability",
 ]
 
 
@@ -27,6 +29,8 @@ def _add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--min-probability", type=float, default=0.20)
     parser.add_argument("--below-threshold-weight-scale", type=float, default=0.25)
     parser.add_argument("--probability-exponent", type=float, default=2.0)
+    parser.add_argument("--search-top-k", type=int, default=3)
+    parser.add_argument("--search-plies", type=int, default=3)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -50,13 +54,19 @@ def _build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--rated", action="store_true")
     render_parser.add_argument("--initial-time", type=int, default=480)
     render_parser.add_argument("--increment", type=int, default=0)
+    render_parser.add_argument("--time-control", action="append", choices=["bullet", "blitz", "rapid", "classical"])
     render_parser.add_argument("--concurrency", type=int, default=1)
     render_parser.add_argument("--opponent-min-rating", type=int)
     render_parser.add_argument("--opponent-max-rating", type=int)
     render_parser.add_argument("--opponent-rating-difference", type=int)
     render_parser.add_argument("--output")
     render_parser.add_argument("--accept-casual-challenges", action="store_true")
+    render_parser.add_argument("--only-bot-challenges", action="store_true")
     _add_policy_args(render_parser)
+
+    http_render_parser = subparsers.add_parser("render-http-bot-config")
+    http_render_parser.add_argument("--output", default="data/artifacts/lichess-bot/http-config.yml")
+    http_render_parser.add_argument("--allow-missing-token", action="store_true")
 
     uci_parser = subparsers.add_parser("run-uci")
     uci_parser.add_argument("--checkpoint", required=True)
@@ -70,6 +80,7 @@ def _build_parser() -> argparse.ArgumentParser:
     bot_parser.add_argument("--rated", action="store_true")
     bot_parser.add_argument("--initial-time", type=int, default=480)
     bot_parser.add_argument("--increment", type=int, default=0)
+    bot_parser.add_argument("--time-control", action="append", choices=["bullet", "blitz", "rapid", "classical"])
     bot_parser.add_argument("--concurrency", type=int, default=1)
     bot_parser.add_argument("--poll-interval", type=int, default=30)
     bot_parser.add_argument("--opponent-min-rating", type=int)
@@ -77,6 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
     bot_parser.add_argument("--opponent-rating-difference", type=int)
     bot_parser.add_argument("--challenge-user")
     bot_parser.add_argument("--accept-casual-challenges", action="store_true")
+    bot_parser.add_argument("--only-bot-challenges", action="store_true")
     _add_policy_args(bot_parser)
 
     verify_parser = subparsers.add_parser("verify-bot")
@@ -131,15 +143,29 @@ def main() -> None:
                 rated=args.rated,
                 initial_time=args.initial_time,
                 increment=args.increment,
+                time_controls=args.time_control,
                 concurrency=args.concurrency,
                 opponent_min_rating=args.opponent_min_rating,
                 opponent_max_rating=args.opponent_max_rating,
                 opponent_rating_difference=opponent_rating_difference,
                 accept_casual_challenges=args.accept_casual_challenges,
+                only_bot_challenges=args.only_bot_challenges,
                 selection_policy=args.selection_policy,
                 min_probability=args.min_probability,
                 below_threshold_weight_scale=args.below_threshold_weight_scale,
                 probability_exponent=args.probability_exponent,
+                search_top_k=args.search_top_k,
+                search_plies=args.search_plies,
+            )
+        )
+        return
+
+    if args.command == "render-http-bot-config":
+        print(
+            render_http_lichess_bot_config(
+                args.output,
+                project_root=Path.cwd(),
+                allow_missing_token=args.allow_missing_token,
             )
         )
         return
@@ -152,6 +178,8 @@ def main() -> None:
             min_probability=args.min_probability,
             below_threshold_weight_scale=args.below_threshold_weight_scale,
             probability_exponent=args.probability_exponent,
+            search_top_k=args.search_top_k,
+            search_plies=args.search_plies,
         )
         return
 
@@ -167,6 +195,7 @@ def main() -> None:
             rated=args.rated,
             initial_time=args.initial_time,
             increment=args.increment,
+            time_controls=args.time_control,
             concurrency=args.concurrency,
             poll_interval_seconds=args.poll_interval,
             opponent_min_rating=args.opponent_min_rating,
@@ -174,10 +203,13 @@ def main() -> None:
             opponent_rating_difference=opponent_rating_difference,
             challenge_username=args.challenge_user,
             accept_casual_challenges=args.accept_casual_challenges,
+            only_bot_challenges=args.only_bot_challenges,
             selection_policy=args.selection_policy,
             min_probability=args.min_probability,
             below_threshold_weight_scale=args.below_threshold_weight_scale,
             probability_exponent=args.probability_exponent,
+            search_top_k=args.search_top_k,
+            search_plies=args.search_plies,
         )
         if result is not None:
             print(result)

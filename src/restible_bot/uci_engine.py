@@ -44,6 +44,8 @@ def serve_uci(
     min_probability: float = 0.20,
     below_threshold_weight_scale: float = 0.25,
     probability_exponent: float = 2.0,
+    search_top_k: int = 3,
+    search_plies: int = 3,
 ) -> None:
     config = load_config(config_path)
     checkpoint = Path(checkpoint_path).resolve()
@@ -96,12 +98,22 @@ def serve_uci(
                 min_probability=min_probability,
                 below_threshold_weight_scale=below_threshold_weight_scale,
                 probability_exponent=probability_exponent,
+                search_top_k=search_top_k,
+                search_plies=search_plies,
             )
             best_move = inference["best_move"]
             selected_probability = next(
                 move["probability"] for move in inference["moves"] if move["uci"] == best_move
             )
-            print(f"info depth 1 nodes 1 score cp 0 pv {best_move} string prob={selected_probability:.4f}")
+            selected = next(move for move in inference["moves"] if move["uci"] == best_move)
+            selected_weight = selected.get("selection_weight")
+            if selected_weight is None:
+                print(f"info depth 1 nodes 1 score cp 0 pv {best_move} string prob={selected_probability:.4f}")
+            else:
+                print(
+                    f"info depth {search_plies} nodes 1 score cp 0 pv {best_move} "
+                    f"string prob={selected_probability:.4f} weight={selected_weight:.4f}"
+                )
             print(f"bestmove {best_move}")
             sys.stdout.flush()
         elif command in {"stop", "ponderhit"}:
@@ -118,6 +130,8 @@ def main() -> None:
     parser.add_argument("--min-probability", type=float, default=0.20)
     parser.add_argument("--below-threshold-weight-scale", type=float, default=0.25)
     parser.add_argument("--probability-exponent", type=float, default=2.0)
+    parser.add_argument("--search-top-k", type=int, default=3)
+    parser.add_argument("--search-plies", type=int, default=3)
     args = parser.parse_args()
     serve_uci(
         args.config,
@@ -126,6 +140,8 @@ def main() -> None:
         min_probability=args.min_probability,
         below_threshold_weight_scale=args.below_threshold_weight_scale,
         probability_exponent=args.probability_exponent,
+        search_top_k=args.search_top_k,
+        search_plies=args.search_plies,
     )
 
 

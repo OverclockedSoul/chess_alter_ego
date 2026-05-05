@@ -22,6 +22,9 @@ class MoveResponse(BaseModel):
     move: str
     fen: str
     topMove: str
+    topProbability: float
+    secondProbability: float | None = None
+    legalMoveCount: int
     selectionPolicy: str
 
 
@@ -61,6 +64,8 @@ def _api_state() -> dict[str, Any]:
         "min_probability": _float_env("CHESS_BOT_MIN_PROBABILITY", 0.20),
         "below_threshold_weight_scale": _float_env("CHESS_BOT_BELOW_THRESHOLD_WEIGHT_SCALE", 0.25),
         "probability_exponent": _float_env("CHESS_BOT_PROBABILITY_EXPONENT", 2.0),
+        "search_top_k": int(_float_env("CHESS_BOT_SEARCH_TOP_K", 3)),
+        "search_plies": int(_float_env("CHESS_BOT_SEARCH_PLIES", 3)),
     }
 
 
@@ -116,10 +121,17 @@ def move(payload: MoveRequest) -> MoveResponse:
         min_probability=state["min_probability"],
         below_threshold_weight_scale=state["below_threshold_weight_scale"],
         probability_exponent=state["probability_exponent"],
+        search_top_k=state["search_top_k"],
+        search_plies=state["search_plies"],
     )
     return MoveResponse(
         move=inference["best_move"],
         fen=board.fen(),
         topMove=inference["top_move"],
+        topProbability=float(inference["moves"][0]["probability"]),
+        secondProbability=(
+            float(inference["moves"][1]["probability"]) if len(inference["moves"]) > 1 else None
+        ),
+        legalMoveCount=len(inference["moves"]),
         selectionPolicy=inference["selection_policy"],
     )

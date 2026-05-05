@@ -2,8 +2,10 @@ FROM python:3.11-slim
 
 ENV CHESS_BOT_CONFIG=configs/restible.yaml \
     CHESS_BOT_CHECKPOINT=data/models/full/best.pt \
-    CHESS_BOT_SELECTION_POLICY=sample_probability_power \
+    CHESS_BOT_SELECTION_POLICY=sample_probability_power_3ply_win_probability \
     CHESS_BOT_PROBABILITY_EXPONENT=2.0 \
+    CHESS_BOT_SEARCH_TOP_K=3 \
+    CHESS_BOT_SEARCH_PLIES=3 \
     PORT=8001 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
